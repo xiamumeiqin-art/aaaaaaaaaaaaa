@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>歌枠リクエスト - Pro Selection</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        :root { --main-color: #ff00ff; }
+        body { font-family: sans-serif; background: #f0f2f5; margin: 0; padding: 20px; display: flex; justify-content: center; }
+        .card { background: white; padding: 25px; border-radius: 15px; max-width: 500px; width: 100%; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        h2 { margin-top: 0; border-left: 5px solid var(--main-color); padding-left: 10px; font-size: 1.2rem; }
+        input { width: 100%; padding: 12px; margin: 8px 0; border: 1px solid #ddd; border-radius: 8px; box-sizing: border-box; }
+        .song-list { max-height: 400px; overflow-y: auto; border: 1px solid #eee; border-radius: 8px; margin-top: 15px; }
+        .song-item { padding: 15px; border-bottom: 1px solid #eee; display: flex; flex-direction: column; }
+        .song-main { display: flex; justify-content: space-between; align-items: center; }
+        .song-title { font-weight: bold; font-size: 15px; color: #333; }
+        .song-meta { font-size: 11px; color: #666; margin-top: 4px; display: flex; gap: 10px; }
+        .badge { background: #eee; padding: 2px 6px; border-radius: 4px; }
+        .memo { font-size: 11px; color: #999; margin-top: 4px; font-style: italic; }
+        .req-btn { background: var(--main-color); color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; }
+    </style>
+</head>
+<body>
+<div class="card">
+    <h2>歌える曲リスト</h2>
+    <input type="text" id="user-name" placeholder="あなたの名前を入力">
+    <input type="text" id="search-box" placeholder="曲名・歌手名・メモで検索...">
+    <div id="list-container" class="song-list">読み込み中...</div>
+</div>
+
+<script type="module">
+    import { firebaseConfig } from "./config.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+    import { getDatabase, ref, onValue, push } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    let masterList = [];
+    let coolMinutes = 3;
+
+    onValue(ref(db, 'settings/coolTime'), (s) => { if(s.exists()) coolMinutes = s.val(); });
+    onValue(ref(db, 'songList'), (snapshot) => {
+        const data = snapshot.val();
+        if(!data) { document.getElementById('list-container').innerHTML = "リストが空です"; return; }
+        masterList = Object.entries(data).map(([id, val]) => ({id, ...val})).sort((a, b) => a.title.localeCompare(b.title, 'ja'));
+        renderList(masterList);
+    });
+
+    function renderList(list) {
+        const container = document.getElementById('list-container');
+        container.innerHTML = "";
+        list.forEach(song => {
+            const div = document.createElement('div');
+            div.className = 'song-item';
+            div.innerHTML = `<div class="song-main"><div><div class="song-title">${song.title}</div><div style="font-size:12px; color:#666;">${song.artist}</div></div><button class="req-btn">選択</button></div>
+                <div class="song-meta">${song.key ? `<span class="badge">Key: ${song.key}</span>` : ''}${song.source ? `<span class="badge">音源: ${song.source}</span>` : ''}</div>
+                ${song.memo ? `<div class="memo">※ ${song.memo}</div>` : ''}`;
+            div.querySelector('button').onclick = () => sendRequest(song);
+            container.appendChild(div);
+        });
+    }
+
+    document.getElementById('search-box').oninput = (e) => {
+        const word = e.target.value.toLowerCase();
+        const filtered = masterList.filter(s => s.title.toLowerCase().includes(word) || s.artist.toLowerCase().includes(word) || (s.memo && s.memo.toLowerCase().includes(word)));
+        renderList(filtered);
+    };
+
+    function sendRequest(song) {
+        const last = localStorage.getItem('lastReq');
+        const now = Date.now();
+        if (last && (now - last < coolMinutes * 60000)) return alert('連投制限中です');
+        const user = document.getElementById('user-name').value || "匿名";
+        push(ref(db, 'queue'), { title: song.title, artist: song.artist, user: user, timestamp: now }).then(() => {
+            localStorage.setItem('lastReq', now);
+            alert('リクエストを送りました！');
+        });
+    }
+</script>
+</body>
+</html>

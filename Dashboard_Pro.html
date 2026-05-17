@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Dashboard Pro - Cadenz Works</title>
+    <style>
+        :root { --main-color: #ff00ff; }
+        body { font-family: sans-serif; padding: 20px; background: #1a1a1a; color: white; line-height: 1.6; }
+        .panel { background: #2a2a2a; padding: 20px; border-radius: 12px; margin-bottom: 20px; border: 1px solid #333; }
+        h2, h3 { margin-top: 0; color: var(--main-color); }
+        .config-grid { display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 15px; }
+        .input-group { display: flex; flex-direction: column; gap: 5px; }
+        label { font-size: 11px; color: #aaa; }
+        input { padding: 10px; border-radius: 6px; border: 1px solid #444; background: #1a1a1a; color: white; }
+        button { padding: 10px 20px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; color: white; transition: 0.2s; }
+        .btn-add { background: var(--main-color); }
+        .btn-save { background: #28a745; }
+        .btn-del { background: #ff4d4d; }
+        .btn-sing { background: #00ccff; }
+        .master-list { max-height: 250px; overflow-y: auto; background: #111; padding: 10px; border-radius: 8px; font-size: 13px; }
+        .master-item { display: flex; justify-content: space-between; padding: 5px 0; border-bottom: 1px solid #222; }
+        .req-item { background: #333; padding: 15px; margin: 10px 0; border-radius: 8px; display: flex; justify-content: space-between; align-items: center; }
+    </style>
+</head>
+<body>
+    <div class="panel">
+        <h2>レパートリー管理 (Pro)</h2>
+        <h3>1曲ずつ追加</h3>
+        <div class="config-grid">
+            <div class="input-group"><label>曲名*</label><input type="text" id="add-title" style="width:140px;"></div>
+            <div class="input-group"><label>アーティスト*</label><input type="text" id="add-artist" style="width:120px;"></div>
+            <div class="input-group"><label>キー</label><input type="text" id="add-key" style="width:50px;"></div>
+            <div class="input-group"><label>音源</label><input type="text" id="add-source" style="width:80px;"></div>
+            <div class="input-group"><label>メモ</label><input type="text" id="add-memo" style="width:120px;"></div>
+            <button id="btn-manual-add" class="btn-add">登録</button>
+        </div>
+        <hr style="border:0; border-top:1px solid #444; margin:20px 0;">
+        <div class="config-grid">
+            <div><label style="display:block; font-size:11px;">CSVインポート</label><input type="file" id="csv-input" accept=".csv"></div>
+            <button id="clear-master" class="btn-del">リスト全消去</button>
+        </div>
+        <div style="margin-top:15px;"><div id="master-display" class="master-list">読み込み中...</div></div>
+    </div>
+    <div class="panel">
+        <h2>コントロール</h2>
+        連投制限：<input type="number" id="cool-input" value="3" style="width:60px"> 分
+        <button id="save-cfg" class="btn-save">設定保存</button>
+        <button id="clear-obs" style="background:#666">OBS表示消去</button>
+    </div>
+    <div class="panel">
+        <h2>リクエスト中</h2>
+        <div id="queue-list">なし</div>
+    </div>
+
+<script type="module">
+    import { firebaseConfig } from "./config.js";
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+    import { getDatabase, ref, onValue, set, push, remove } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js";
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    document.getElementById('btn-manual-add').onclick = () => {
+        const title = document.getElementById('add-title').value;
+        const artist = document.getElementById('add-artist').value;
+        if (!title || !artist) return alert('必須項目漏れ');
+        push(ref(db, 'songList'), { title: title.trim(), artist: artist.trim(), key: document.getElementById('add-key').value, source: document.getElementById('add-source').value, memo: document.getElementById('add-memo').value }).then(() => {
+            ['add-title', 'add-artist', 'add-key', 'add-source', 'add-memo'].forEach(id => document.getElementById(id).value = "");
+        });
+    };
+
+    document.getElementById('csv-input').addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            const lines = ev.target.result.split(/\r\n|\n/);
+            lines.forEach((line, index) => {
+                if (!line.trim() || line.includes("曲名")) return;
+                const p = line.split(',');
+                if (p.length >= 2) push(ref(db, 'songList'), { title: p[0].trim(), artist: p[1].trim(), key: (p[2]||"").trim(), source: (p[3]||"").trim(), memo: (p[4]||"").trim() });
+            });
+            alert('完了');
+        };
+        reader.readAsText(file, 'UTF-8');
+    });
+
+    document.getElementById('clear-master').onclick = () => { if(confirm('消去？')) set(ref(db, 'songList'), null); };
+    document.getElementById('save-cfg').onclick = () => set(ref(db, 'settings/coolTime'), document.getElementById('cool-input').value).then(()=>alert('保存完了'));
+    document.getElementById('clear-obs').onclick = () => set(ref(db, 'currentSinging'), null);
+
+    window.sing = (key, title, artist, user) => {
+        set(ref(db, 'currentSinging'), { title, artist, user, timestamp: Date.now() }).then(() => {
+            push(ref(db, 'history'), { title, artist, user, timestamp: Date.now() });
+            remove(ref(db, `queue/${key}`));
+        });
+    };
+    window.deleteSong = (key) => { if(confirm('削除？')) remove(ref(db, `songList/${key}`)); };
+
+    onValue(ref(db, 'songList'), (snap) => {
+        const d = document.getElementById('master-display');
+        const data = snap.val();
+        d.innerHTML = data ? "" : "空";
+        if(data) Object.entries(data).sort((a,b)=>a[1].title.localeCompare(b[1].title,'ja')).forEach(([k, v]) => {
+            const div = document.createElement('div');
+            div.className = 'master-item';
+            div.innerHTML = `<span>${v.title} / ${v.artist}</span><button onclick="deleteSong('${k}')" class="btn-del">削除</button>`;
+            d.appendChild(div);
+        });
+    });
+
+    onValue(ref(db, 'queue'), (snap) => {
+        const list = document.getElementById('queue-list');
+        const data = snap.val();
+        list.innerHTML = data ? "" : "なし";
+        if(data) Object.entries(data).forEach(([key, val]) => {
+            const div = document.createElement('div');
+            div.className = 'req-item';
+            div.innerHTML = `<div><b>${val.title}</b><br><small>${val.artist} / ${val.user}</small></div><button class="btn-sing" onclick="sing('${key}','${val.title}','${val.artist}','${val.user}')">歌う</button>`;
+            list.appendChild(div);
+        });
+    });
+    onValue(ref(db, 'settings/coolTime'), (s) => { if(s.exists()) document.getElementById('cool-input').value = s.val(); });
+</script>
+</body>
+</html>
